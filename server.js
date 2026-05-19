@@ -8,8 +8,9 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import adminRoutes from './Routes/adminRoutes.js';
 import clientRoutes from './Routes/clientRoutes.js';
+import credentialRoutes from './Routes/credentialRoutes.js';  // ← ADD THIS LINE
 
-// Force Google DNS servers (fixes Atlas SRV ECONNREFUSED)
+// Force Google DNS servers
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 dotenv.config();
@@ -41,6 +42,7 @@ mongoose.connect(process.env.MONGODB_URI)
 // Routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/client', clientRoutes);
+app.use('/api/admin', credentialRoutes);  // ← ADD THIS LINE
 
 // Home Route
 app.get('/', (req, res) => {
