@@ -1,33 +1,21 @@
 import express from 'express';
+import { protectAdmin } from '../middleware/auth.middleware.js';
 import {
   addClientCredentials,
   getClientCredentials,
-  getCredentialByName,
-  getCredentialById,
   updateCredential,
-  updateCredentialField,
-  addCredentialField,
-  removeCredentialField,
-  deleteCredential,
-  permanentDeleteCredential,
-  restoreCredential,
-  getCredentialNames
-} from '../Controllers/credentialController.js';
+  deleteCredential
+} from '../Controllers/CredentialController.js';
 
 const router = express.Router();
 
+// All routes require admin authentication
+router.use(protectAdmin);
+
 // Credential routes
-router.post('/client/:clientId/credentials', addClientCredentials);
-router.get('/client/:clientId/credentials', getClientCredentials);
-router.get('/client/:clientId/credentials/names', getCredentialNames);
-router.get('/client/:clientId/credentials/:credentialName', getCredentialByName);
-router.get('/credentials/:id', getCredentialById);
-router.put('/credentials/:id', updateCredential);
-router.put('/credentials/:id/field/:fieldKey', updateCredentialField);
-router.post('/credentials/:id/field', addCredentialField);
-router.delete('/credentials/:id/field/:fieldKey', removeCredentialField);
-router.delete('/credentials/:id', deleteCredential);
-router.delete('/credentials/:id/permanent', permanentDeleteCredential);
-router.post('/credentials/:id/restore', restoreCredential);
+router.post('/client/:clientId', addClientCredentials);
+router.get('/client/:clientId', getClientCredentials);
+router.put('/credential/:id', updateCredential);
+router.delete('/credential/:id', deleteCredential);
 
 export default router;

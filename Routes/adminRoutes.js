@@ -1,4 +1,5 @@
 import express from 'express';
+import { protectAdmin } from '../middleware/auth.middleware.js';
 import {
   adminLogin,
   createClient,
@@ -9,6 +10,8 @@ import {
 } from '../Controllers/adminController.js';
 
 const router = express.Router();
+
+router.use(protectAdmin);
 
 router.post('/login', adminLogin);
 router.post('/create-client', createClient);

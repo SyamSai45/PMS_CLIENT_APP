@@ -1,5 +1,7 @@
+import jwt from 'jsonwebtoken';
 import Admin from '../Models/Admin.js';
 import Client from '../Models/Client.js';
+import Credential from '../Models/Credential.js';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 
@@ -8,23 +10,45 @@ export const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
     const defaultAdmin = Admin.getDefaultAdmin();
 
     if (email === defaultAdmin.email && password === defaultAdmin.password) {
-      const existingAdmin = await Admin.findOne({ email: defaultAdmin.email });
+      let existingAdmin = await Admin.findOne({ email: defaultAdmin.email });
+      
       if (!existingAdmin) {
         const hashedPassword = await bcrypt.hash(defaultAdmin.password, 10);
-        const newAdmin = new Admin({
+        existingAdmin = new Admin({
           email: defaultAdmin.email,
           password: hashedPassword
         });
-        await newAdmin.save();
+        await existingAdmin.save();
       }
+
+      const token = jwt.sign(
+        { 
+          id: existingAdmin._id, 
+          email: existingAdmin.email,
+          role: 'admin'
+        },
+        process.env.JWT_SECRET || 'your_secret_key',
+        { expiresIn: '30d' }
+      );
 
       return res.status(200).json({
         success: true,
         message: 'Admin login successful',
-        admin: { email: defaultAdmin.email }
+        admin: { 
+          _id: existingAdmin._id,
+          email: existingAdmin.email 
+        },
+        token
       });
     }
 
@@ -40,6 +64,17 @@ export const adminLogin = async (req, res) => {
       error: error.message
     });
   }
+};
+
+// Helper function to transform credentials to object format
+const transformCredentialsToObject = (credentialsArray) => {
+  const credentialsObject = {};
+  
+  credentialsArray.forEach(cred => {
+    credentialsObject[cred.credentialName] = cred.credentials;
+  });
+  
+  return credentialsObject;
 };
 
 // Create Client
@@ -120,14 +155,47 @@ export const createClient = async (req, res) => {
   }
 };
 
-// Get All Clients
+// Get All Clients with their credentials (transformed to object format)
 export const getAllClients = async (req, res) => {
   try {
+    // Get all clients without password
     const clients = await Client.find({}).select('-password');
+    
+    // Get all active credentials
+    const allCredentials = await Credential.find({ isActive: true });
+    
+    // Group credentials by clientId
+    const credentialsByClient = {};
+    allCredentials.forEach(cred => {
+      const clientId = cred.clientId.toString();
+      if (!credentialsByClient[clientId]) {
+        credentialsByClient[clientId] = [];
+      }
+      credentialsByClient[clientId].push(cred);
+    });
+    
+    // Combine clients with their credentials in object format
+    const clientsWithCredentials = clients.map(client => {
+      const clientObj = client.toObject();
+      const clientCredentials = credentialsByClient[client._id.toString()] || [];
+      
+      // Transform credentials array to object format
+      const credentialsObject = {};
+      clientCredentials.forEach(cred => {
+        credentialsObject[cred.credentialName] = cred.credentials;
+      });
+      
+      return {
+        ...clientObj,
+        credentials: credentialsObject,  // Now it's an object, not an array
+        credentialsCount: clientCredentials.length
+      };
+    });
+    
     res.status(200).json({
       success: true,
-      count: clients.length,
-      clients
+      count: clientsWithCredentials.length,
+      clients: clientsWithCredentials
     });
   } catch (error) {
     console.error(error);
@@ -139,7 +207,7 @@ export const getAllClients = async (req, res) => {
   }
 };
 
-// Get Client By ID
+// Get Client By ID with credentials (transformed to object format)
 export const getClientById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -152,7 +220,7 @@ export const getClientById = async (req, res) => {
     }
 
     const client = await Client.findById(id).select('-password');
-
+    
     if (!client) {
       return res.status(404).json({
         success: false,
@@ -160,9 +228,25 @@ export const getClientById = async (req, res) => {
       });
     }
 
+    // Get credentials for this client
+    const credentials = await Credential.find({ 
+      clientId: id, 
+      isActive: true 
+    });
+    
+    // Transform credentials array to object format
+    const credentialsObject = {};
+    credentials.forEach(cred => {
+      credentialsObject[cred.credentialName] = cred.credentials;
+    });
+
     res.status(200).json({
       success: true,
-      client
+      client: {
+        ...client.toObject(),
+        credentials: credentialsObject,
+        credentialsCount: credentials.length
+      }
     });
   } catch (error) {
     console.error(error);
@@ -174,11 +258,18 @@ export const getClientById = async (req, res) => {
   }
 };
 
-// Update Client By ID
+// Update Client By ID with credential management
 export const updateClientById = async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const { 
+      // Client fields
+      name, email, phone, password, projects, appName, version, contactAdmin,
+      // Credential operations
+      addCredentials,      // Array of new credentials to add
+      updateCredentials,   // Array of existing credentials to update
+      deleteCredentialNames  // Array of credential names to delete
+    } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -187,13 +278,24 @@ export const updateClientById = async (req, res) => {
       });
     }
 
-    if (updates.password) {
-      updates.password = await bcrypt.hash(updates.password, 10);
+    // Prepare client update data
+    const clientUpdates = {};
+    if (name) clientUpdates.name = name;
+    if (email) clientUpdates.email = email;
+    if (phone) clientUpdates.phone = phone;
+    if (projects) clientUpdates.projects = projects;
+    if (appName) clientUpdates.appName = appName;
+    if (version) clientUpdates.version = version;
+    if (contactAdmin) clientUpdates.contactAdmin = contactAdmin;
+    
+    if (password) {
+      clientUpdates.password = await bcrypt.hash(password, 10);
     }
 
+    // Update client
     const client = await Client.findByIdAndUpdate(
       id,
-      updates,
+      clientUpdates,
       { new: true, runValidators: true }
     ).select('-password');
 
@@ -204,10 +306,76 @@ export const updateClientById = async (req, res) => {
       });
     }
 
+    // 1. ADD new credentials
+    if (addCredentials && addCredentials.length > 0) {
+      for (const cred of addCredentials) {
+        const { credentialName, credentials } = cred;
+        
+        // Check if credential with same name exists
+        const existingCred = await Credential.findOne({ 
+          clientId: id, 
+          credentialName 
+        });
+        
+        if (!existingCred && credentialName && credentials) {
+          await Credential.create({
+            clientId: id,
+            credentialName,
+            credentials,
+            createdBy: req.adminId
+          });
+        }
+      }
+    }
+
+    // 2. UPDATE existing credentials
+    if (updateCredentials && updateCredentials.length > 0) {
+      for (const cred of updateCredentials) {
+        const { credentialName, credentials } = cred;
+        
+        await Credential.findOneAndUpdate(
+          { clientId: id, credentialName },
+          { credentials },
+          { new: true }
+        );
+      }
+    }
+
+    // 3. DELETE credentials by name (soft delete)
+    if (deleteCredentialNames && deleteCredentialNames.length > 0) {
+      for (const credentialName of deleteCredentialNames) {
+        await Credential.findOneAndUpdate(
+          { clientId: id, credentialName },
+          { isActive: false }
+        );
+      }
+    }
+
+    // Get updated credentials list
+    const updatedCredentials = await Credential.find({ 
+      clientId: id, 
+      isActive: true 
+    });
+
+    // Transform to object format
+    const credentialsObject = {};
+    updatedCredentials.forEach(cred => {
+      credentialsObject[cred.credentialName] = cred.credentials;
+    });
+
+    // Update client's credential count
+    await Client.findByIdAndUpdate(id, {
+      credentials: updatedCredentials.length.toString()
+    });
+
     res.status(200).json({
       success: true,
-      message: 'Client updated successfully',
-      client
+      message: 'Client and credentials updated successfully',
+      client: {
+        ...client.toObject(),
+        credentials: credentialsObject,
+        credentialsCount: updatedCredentials.length
+      }
     });
   } catch (error) {
     console.error(error);
@@ -232,7 +400,7 @@ export const deleteClientById = async (req, res) => {
     }
 
     const client = await Client.findByIdAndDelete(id);
-
+    
     if (!client) {
       return res.status(404).json({
         success: false,
@@ -240,9 +408,15 @@ export const deleteClientById = async (req, res) => {
       });
     }
 
+    // Soft delete all credentials for this client
+    await Credential.updateMany(
+      { clientId: id },
+      { isActive: false }
+    );
+
     res.status(200).json({
       success: true,
-      message: 'Client deleted successfully'
+      message: 'Client and associated credentials deleted successfully'
     });
   } catch (error) {
     console.error(error);

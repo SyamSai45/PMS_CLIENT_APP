@@ -1,10 +1,11 @@
 import Client from '../Models/Client.js';
+import Credential from '../Models/Credential.js';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import fs from 'fs';
 import path from 'path';
 
-// Client Login using phoneNumber and password
+// Client Login
 export const clientLogin = async (req, res) => {
   try {
     const { phone, password } = req.body;
@@ -42,7 +43,13 @@ export const clientLogin = async (req, res) => {
         clientNumber: client.clientNumber,
         name: client.name,
         email: client.email,
-        phone: client.phone
+        phone: client.phone,
+        profileImage: client.profileImage,
+        memberSince: client.memberSince,
+        projects: client.projects,
+        credentials: client.credentials,
+        appName: client.appName,
+        version: client.version
       }
     });
   } catch (error) {
@@ -55,30 +62,46 @@ export const clientLogin = async (req, res) => {
   }
 };
 
-// Get Client By ID
+// Get Client By ID with credentials in object format
 export const getClientById = async (req, res) => {
   try {
     const { id } = req.params;
-
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid client ID'
       });
     }
-
+    
     const client = await Client.findById(id).select('-password');
-
+    
     if (!client) {
       return res.status(404).json({
         success: false,
         message: 'Client not found'
       });
     }
-
+    
+    // Get credentials for this client
+    const credentials = await Credential.find({ 
+      clientId: id, 
+      isActive: true 
+    });
+    
+    // Transform to object format
+    const credentialsObject = {};
+    credentials.forEach(cred => {
+      credentialsObject[cred.credentialName] = cred.credentials;
+    });
+    
     res.status(200).json({
       success: true,
-      client
+      client: {
+        ...client.toObject(),
+        credentials: credentialsObject,
+        credentialsCount: credentials.length
+      }
     });
   } catch (error) {
     console.error(error);
@@ -95,35 +118,36 @@ export const updateClientById = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
-
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid client ID'
       });
     }
-
+    
     // Remove sensitive fields
     delete updates.clientNumber;
-
+    delete updates._id;
+    
     // Hash password if being updated
     if (updates.password) {
       updates.password = await bcrypt.hash(updates.password, 10);
     }
-
+    
     const client = await Client.findByIdAndUpdate(
       id,
       updates,
       { new: true, runValidators: true }
     ).select('-password');
-
+    
     if (!client) {
       return res.status(404).json({
         success: false,
         message: 'Client not found'
       });
     }
-
+    
     res.status(200).json({
       success: true,
       message: 'Client updated successfully',
@@ -143,40 +167,40 @@ export const updateClientById = async (req, res) => {
 export const uploadProfileImage = async (req, res) => {
   try {
     const { id } = req.params;
-
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       if (req.file) fs.unlinkSync(req.file.path);
       return res.status(400).json({ success: false, message: 'Invalid client ID' });
     }
-
+    
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No image file provided' });
     }
-
+    
     const client = await Client.findById(id);
-
+    
     if (!client) {
       fs.unlinkSync(req.file.path);
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
-
+    
     // Delete old profile image if exists
     if (client.profileImage) {
       const oldPath = path.join(client.profileImage);
       if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
     }
-
+    
     // Save new image path
     client.profileImage = req.file.path.replace(/\\/g, '/');
     await client.save();
-
+    
     // Build full URL
     const imageUrl = `${req.protocol}://${req.get('host')}/${client.profileImage}`;
-
+    
     res.status(200).json({
       success: true,
       message: 'Profile image uploaded successfully',
-      profileImage: imageUrl                          // ← full URL now
+      profileImage: imageUrl
     });
   } catch (error) {
     if (req.file) fs.unlinkSync(req.file.path);
@@ -189,29 +213,29 @@ export const uploadProfileImage = async (req, res) => {
 export const getProfileImage = async (req, res) => {
   try {
     const { id } = req.params;
-
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ success: false, message: 'Invalid client ID' });
     }
-
+    
     const client = await Client.findById(id).select('profileImage name clientNumber');
-
+    
     if (!client) {
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
-
+    
     if (!client.profileImage) {
       return res.status(404).json({ success: false, message: 'No profile image found for this client' });
     }
-
+    
     // Build full URL
     const imageUrl = `${req.protocol}://${req.get('host')}/${client.profileImage}`;
-
+    
     res.status(200).json({
       success: true,
       clientNumber: client.clientNumber,
       name: client.name,
-      profileImage: imageUrl                          // ← full URL now
+      profileImage: imageUrl
     });
   } catch (error) {
     console.error(error);
@@ -223,40 +247,40 @@ export const getProfileImage = async (req, res) => {
 export const updateProfileImage = async (req, res) => {
   try {
     const { id } = req.params;
-
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       if (req.file) fs.unlinkSync(req.file.path);
       return res.status(400).json({ success: false, message: 'Invalid client ID' });
     }
-
+    
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No image file provided' });
     }
-
+    
     const client = await Client.findById(id);
-
+    
     if (!client) {
       fs.unlinkSync(req.file.path);
       return res.status(404).json({ success: false, message: 'Client not found' });
     }
-
+    
     // Delete old image
     if (client.profileImage) {
       const oldPath = path.join(client.profileImage);
       if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
     }
-
+    
     // Save new image
     client.profileImage = req.file.path.replace(/\\/g, '/');
     await client.save();
-
+    
     // Build full URL
     const imageUrl = `${req.protocol}://${req.get('host')}/${client.profileImage}`;
-
+    
     res.status(200).json({
       success: true,
       message: 'Profile image updated successfully',
-      profileImage: imageUrl                          // ← full URL now
+      profileImage: imageUrl
     });
   } catch (error) {
     if (req.file) fs.unlinkSync(req.file.path);
@@ -264,45 +288,141 @@ export const updateProfileImage = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
+
 // Delete Profile Image
 export const deleteProfileImage = async (req, res) => {
   try {
     const { id } = req.params;
-
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
         message: 'Invalid client ID'
       });
     }
-
+    
     const client = await Client.findById(id);
-
+    
     if (!client) {
       return res.status(404).json({
         success: false,
         message: 'Client not found'
       });
     }
-
+    
     if (!client.profileImage) {
       return res.status(404).json({
         success: false,
         message: 'No profile image to delete'
       });
     }
-
+    
     // Delete file from disk
     const imagePath = path.join(client.profileImage);
     if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
-
+    
     // Remove from database
     client.profileImage = null;
     await client.save();
-
+    
     res.status(200).json({
       success: true,
       message: 'Profile image deleted successfully'
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Change Password
+export const changePassword = async (req, res) => {
+  try {
+    const { id, currentPassword, newPassword } = req.body;
+    
+    if (!id || !currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Client ID, current password and new password are required'
+      });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid client ID'
+      });
+    }
+    
+    const client = await Client.findById(id);
+    
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: 'Client not found'
+      });
+    }
+    
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, client.password);
+    
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+    
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    client.password = hashedPassword;
+    await client.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Get Client's Credentials in object format
+export const getMyCredentials = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(clientId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid client ID'
+      });
+    }
+    
+    const credentials = await Credential.find({ 
+      clientId, 
+      isActive: true 
+    }).sort({ createdAt: -1 });
+    
+    // Transform to object format
+    const credentialsObject = {};
+    credentials.forEach(cred => {
+      credentialsObject[cred.credentialName] = cred.credentials;
+    });
+    
+    res.status(200).json({
+      success: true,
+      count: credentials.length,
+      credentials: credentialsObject
     });
   } catch (error) {
     console.error(error);

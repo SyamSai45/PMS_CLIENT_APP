@@ -2,12 +2,12 @@ import Credential from '../Models/Credential.js';
 import Client from '../Models/Client.js';
 import mongoose from 'mongoose';
 
-// Add credentials to a client
+// Add credentials to a client (Admin only)
 export const addClientCredentials = async (req, res) => {
   try {
     const { clientId } = req.params;
-    const { credentialName, fields } = req.body;
-    const adminId = req.adminId || req.user?._id;
+    const { credentialName, credentials } = req.body;
+    const adminId = req.adminId;
 
     if (!mongoose.Types.ObjectId.isValid(clientId)) {
       return res.status(400).json({
@@ -19,7 +19,7 @@ export const addClientCredentials = async (req, res) => {
     if (!adminId) {
       return res.status(401).json({
         success: false,
-        message: 'Unauthorized: Admin ID is required'
+        message: 'Unauthorized: Admin authentication required'
       });
     }
 
@@ -31,34 +31,52 @@ export const addClientCredentials = async (req, res) => {
       });
     }
 
-    if (!credentialName || !fields || !fields.length) {
+    if (!credentialName || !credentials) {
       return res.status(400).json({
         success: false,
-        message: 'Credential name and at least one field are required'
+        message: 'Credential name and credentials data are required'
       });
     }
 
-    const existingCredential = await Credential.findOne({ credentialName });
+    // Check if credential with same name exists
+    const existingCredential = await Credential.findOne({
+      clientId,
+      credentialName
+    });
+
     if (existingCredential) {
       return res.status(400).json({
         success: false,
-        message: `Credential with name "${credentialName}" already exists`
+        message: `Credential with name "${credentialName}" already exists for this client`
       });
     }
 
     const newCredential = new Credential({
       clientId,
       credentialName,
-      fields,
+      credentials,
       createdBy: adminId
     });
 
     await newCredential.save();
 
+    // Update client's credential count
+    const credentialCount = await Credential.countDocuments({ 
+      clientId, 
+      isActive: true 
+    });
+    client.credentials = credentialCount.toString();
+    await client.save();
+
+    // Transform response to object format
+    const credentialObject = {
+      [credentialName]: credentials
+    };
+
     res.status(201).json({
       success: true,
       message: 'Credentials added successfully',
-      credential: newCredential
+      credential: credentialObject
     });
   } catch (error) {
     console.error(error);
@@ -70,7 +88,7 @@ export const addClientCredentials = async (req, res) => {
   }
 };
 
-// Get all credentials for a client
+// Get all credentials for a client (returns object format)
 export const getClientCredentials = async (req, res) => {
   try {
     const { clientId } = req.params;
@@ -87,10 +105,16 @@ export const getClientCredentials = async (req, res) => {
       isActive: true 
     }).sort({ createdAt: -1 });
 
+    // Transform to object format
+    const credentialsObject = {};
+    credentials.forEach(cred => {
+      credentialsObject[cred.credentialName] = cred.credentials;
+    });
+
     res.status(200).json({
       success: true,
       count: credentials.length,
-      credentials
+      credentials: credentialsObject
     });
   } catch (error) {
     console.error(error);
@@ -102,7 +126,7 @@ export const getClientCredentials = async (req, res) => {
   }
 };
 
-// Get credential by name
+// Get credential by name (returns object format)
 export const getCredentialByName = async (req, res) => {
   try {
     const { clientId, credentialName } = req.params;
@@ -127,9 +151,14 @@ export const getCredentialByName = async (req, res) => {
       });
     }
 
+    // Transform to object format
+    const credentialObject = {
+      [credentialName]: credential.credentials
+    };
+
     res.status(200).json({
       success: true,
-      credential
+      credential: credentialObject
     });
   } catch (error) {
     console.error(error);
@@ -141,46 +170,11 @@ export const getCredentialByName = async (req, res) => {
   }
 };
 
-// Get credential by ID
-export const getCredentialById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid credential ID'
-      });
-    }
-
-    const credential = await Credential.findById(id).populate('clientId', 'name clientNumber');
-
-    if (!credential) {
-      return res.status(404).json({
-        success: false,
-        message: 'Credential not found'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      credential
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// Update entire credential
+// Update credential
 export const updateCredential = async (req, res) => {
   try {
     const { id } = req.params;
-    const { credentialName, fields } = req.body;
+    const { credentialName, credentials } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -197,27 +191,24 @@ export const updateCredential = async (req, res) => {
       });
     }
 
-    if (credentialName && credentialName !== credential.credentialName) {
-      const existingCredential = await Credential.findOne({ credentialName });
-      if (existingCredential) {
-        return res.status(400).json({
-          success: false,
-          message: `Credential with name "${credentialName}" already exists`
-        });
-      }
+    if (credentialName) {
       credential.credentialName = credentialName;
     }
-
-    if (fields) {
-      credential.fields = fields;
+    if (credentials) {
+      credential.credentials = credentials;
     }
 
     await credential.save();
+
+    // Transform to object format
+    const credentialObject = {
+      [credential.credentialName]: credential.credentials
+    };
 
     res.status(200).json({
       success: true,
       message: 'Credential updated successfully',
-      credential
+      credential: credentialObject
     });
   } catch (error) {
     console.error(error);
@@ -229,163 +220,7 @@ export const updateCredential = async (req, res) => {
   }
 };
 
-// Update specific field in credential
-export const updateCredentialField = async (req, res) => {
-  try {
-    const { id, fieldKey } = req.params;
-    const { value } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid credential ID'
-      });
-    }
-
-    if (!value) {
-      return res.status(400).json({
-        success: false,
-        message: 'Field value is required'
-      });
-    }
-
-    const credential = await Credential.findById(id);
-    if (!credential) {
-      return res.status(404).json({
-        success: false,
-        message: 'Credential not found'
-      });
-    }
-
-    const fieldIndex = credential.fields.findIndex(f => f.key === fieldKey);
-    
-    if (fieldIndex === -1) {
-      return res.status(404).json({
-        success: false,
-        message: `Field "${fieldKey}" not found`
-      });
-    }
-
-    credential.fields[fieldIndex].value = value;
-    await credential.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Field updated successfully',
-      credential
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// Add new field to credential
-export const addCredentialField = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { key, value } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid credential ID'
-      });
-    }
-
-    if (!key || !value) {
-      return res.status(400).json({
-        success: false,
-        message: 'Key and value are required'
-      });
-    }
-
-    const credential = await Credential.findById(id);
-    if (!credential) {
-      return res.status(404).json({
-        success: false,
-        message: 'Credential not found'
-      });
-    }
-
-    const existingField = credential.fields.find(f => f.key === key);
-    if (existingField) {
-      return res.status(400).json({
-        success: false,
-        message: `Field with key "${key}" already exists`
-      });
-    }
-
-    credential.fields.push({ key, value });
-    await credential.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Field added successfully',
-      credential
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// Remove field from credential
-export const removeCredentialField = async (req, res) => {
-  try {
-    const { id, fieldKey } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid credential ID'
-      });
-    }
-
-    const credential = await Credential.findById(id);
-    if (!credential) {
-      return res.status(404).json({
-        success: false,
-        message: 'Credential not found'
-      });
-    }
-
-    const fieldIndex = credential.fields.findIndex(f => f.key === fieldKey);
-    
-    if (fieldIndex === -1) {
-      return res.status(404).json({
-        success: false,
-        message: `Field "${fieldKey}" not found`
-      });
-    }
-
-    credential.fields.splice(fieldIndex, 1);
-    await credential.save();
-
-    res.status(200).json({
-      success: true,
-      message: 'Field removed successfully',
-      credential
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// Soft delete credential
+// Delete credential (soft delete)
 export const deleteCredential = async (req, res) => {
   try {
     const { id } = req.params;
@@ -410,6 +245,15 @@ export const deleteCredential = async (req, res) => {
       });
     }
 
+    // Update client's credential count
+    const credentialCount = await Credential.countDocuments({ 
+      clientId: credential.clientId, 
+      isActive: true 
+    });
+    await Client.findByIdAndUpdate(credential.clientId, {
+      credentials: credentialCount.toString()
+    });
+
     res.status(200).json({
       success: true,
       message: 'Credential deleted successfully'
@@ -424,30 +268,27 @@ export const deleteCredential = async (req, res) => {
   }
 };
 
-// Permanently delete credential
-export const permanentDeleteCredential = async (req, res) => {
+// Get all credentials across all clients (admin only)
+export const getAllCredentials = async (req, res) => {
   try {
-    const { id } = req.params;
+    const credentials = await Credential.find({ isActive: true })
+      .populate('clientId', 'name clientNumber email')
+      .sort({ createdAt: -1 });
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid credential ID'
-      });
-    }
-
-    const credential = await Credential.findByIdAndDelete(id);
-
-    if (!credential) {
-      return res.status(404).json({
-        success: false,
-        message: 'Credential not found'
-      });
-    }
+    // Transform to object format grouped by client
+    const credentialsByClient = {};
+    credentials.forEach(cred => {
+      const clientName = cred.clientId?.name || 'Unknown';
+      if (!credentialsByClient[clientName]) {
+        credentialsByClient[clientName] = {};
+      }
+      credentialsByClient[clientName][cred.credentialName] = cred.credentials;
+    });
 
     res.status(200).json({
       success: true,
-      message: 'Credential permanently deleted successfully'
+      count: credentials.length,
+      credentials: credentialsByClient
     });
   } catch (error) {
     console.error(error);
@@ -459,7 +300,7 @@ export const permanentDeleteCredential = async (req, res) => {
   }
 };
 
-// Restore soft deleted credential
+// Restore deleted credential
 export const restoreCredential = async (req, res) => {
   try {
     const { id } = req.params;
@@ -484,43 +325,18 @@ export const restoreCredential = async (req, res) => {
       });
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Credential restored successfully',
-      credential
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
-
-// Get all credential names for a client
-export const getCredentialNames = async (req, res) => {
-  try {
-    const { clientId } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(clientId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid client ID'
-      });
-    }
-
-    const credentials = await Credential.find({ 
-      clientId, 
+    // Update client's credential count
+    const credentialCount = await Credential.countDocuments({ 
+      clientId: credential.clientId, 
       isActive: true 
-    }).select('credentialName -_id');
-
-    const names = credentials.map(cred => cred.credentialName);
+    });
+    await Client.findByIdAndUpdate(credential.clientId, {
+      credentials: credentialCount.toString()
+    });
 
     res.status(200).json({
       success: true,
-      names
+      message: 'Credential restored successfully'
     });
   } catch (error) {
     console.error(error);

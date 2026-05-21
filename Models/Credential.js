@@ -1,18 +1,6 @@
 import mongoose from 'mongoose';
 
-const credentialFieldSchema = new mongoose.Schema({
-  key: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  value: {
-    type: String,
-    required: true,
-    trim: true
-  }
-}, { _id: false });
-
+// Dynamic credential schema - no fixed fields
 const credentialSchema = new mongoose.Schema({
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -23,11 +11,14 @@ const credentialSchema = new mongoose.Schema({
   credentialName: {
     type: String,
     required: true,
-    unique: true,
     trim: true
   },
   
-  fields: [credentialFieldSchema],
+  // Dynamic credentials data - can store any structure
+  credentials: {
+    type: mongoose.Schema.Types.Mixed,
+    required: true
+  },
   
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
