@@ -68,15 +68,16 @@ export const addClientCredentials = async (req, res) => {
     client.credentials = credentialCount.toString();
     await client.save();
 
-    // Transform response to object format
-    const credentialObject = {
-      [credentialName]: credentials
-    };
+    // Transform response to array format
+    const credentialArray = [{
+      name: credentialName,
+      data: credentials
+    }];
 
     res.status(201).json({
       success: true,
       message: 'Credentials added successfully',
-      credential: credentialObject
+      credential: credentialArray
     });
   } catch (error) {
     console.error(error);
@@ -88,7 +89,7 @@ export const addClientCredentials = async (req, res) => {
   }
 };
 
-// Get all credentials for a client (returns object format)
+// Get all credentials for a client (returns array format)
 export const getClientCredentials = async (req, res) => {
   try {
     const { clientId } = req.params;
@@ -105,16 +106,19 @@ export const getClientCredentials = async (req, res) => {
       isActive: true 
     }).sort({ createdAt: -1 });
 
-    // Transform to object format
-    const credentialsObject = {};
-    credentials.forEach(cred => {
-      credentialsObject[cred.credentialName] = cred.credentials;
-    });
+    // Transform to array format
+    const credentialsArray = credentials.map(cred => ({
+      name: cred.credentialName,
+      data: cred.credentials,
+      _id: cred._id,
+      createdAt: cred.createdAt,
+      updatedAt: cred.updatedAt
+    }));
 
     res.status(200).json({
       success: true,
-      count: credentials.length,
-      credentials: credentialsObject
+      count: credentialsArray.length,
+      credentials: credentialsArray
     });
   } catch (error) {
     console.error(error);
@@ -126,7 +130,7 @@ export const getClientCredentials = async (req, res) => {
   }
 };
 
-// Get credential by name (returns object format)
+// Get credential by name (returns array format)
 export const getCredentialByName = async (req, res) => {
   try {
     const { clientId, credentialName } = req.params;
@@ -151,14 +155,18 @@ export const getCredentialByName = async (req, res) => {
       });
     }
 
-    // Transform to object format
-    const credentialObject = {
-      [credentialName]: credential.credentials
-    };
+    // Transform to array format
+    const credentialArray = [{
+      name: credential.credentialName,
+      data: credential.credentials,
+      _id: credential._id,
+      createdAt: credential.createdAt,
+      updatedAt: credential.updatedAt
+    }];
 
     res.status(200).json({
       success: true,
-      credential: credentialObject
+      credential: credentialArray
     });
   } catch (error) {
     console.error(error);
@@ -200,15 +208,19 @@ export const updateCredential = async (req, res) => {
 
     await credential.save();
 
-    // Transform to object format
-    const credentialObject = {
-      [credential.credentialName]: credential.credentials
-    };
+    // Transform to array format
+    const credentialArray = [{
+      name: credential.credentialName,
+      data: credential.credentials,
+      _id: credential._id,
+      createdAt: credential.createdAt,
+      updatedAt: credential.updatedAt
+    }];
 
     res.status(200).json({
       success: true,
       message: 'Credential updated successfully',
-      credential: credentialObject
+      credential: credentialArray
     });
   } catch (error) {
     console.error(error);
@@ -275,20 +287,30 @@ export const getAllCredentials = async (req, res) => {
       .populate('clientId', 'name clientNumber email')
       .sort({ createdAt: -1 });
 
-    // Transform to object format grouped by client
-    const credentialsByClient = {};
+    // Transform to array format grouped by client
+    const result = [];
     credentials.forEach(cred => {
-      const clientName = cred.clientId?.name || 'Unknown';
-      if (!credentialsByClient[clientName]) {
-        credentialsByClient[clientName] = {};
-      }
-      credentialsByClient[clientName][cred.credentialName] = cred.credentials;
+      result.push({
+        client: {
+          id: cred.clientId?._id,
+          name: cred.clientId?.name,
+          clientNumber: cred.clientId?.clientNumber,
+          email: cred.clientId?.email
+        },
+        credential: {
+          name: cred.credentialName,
+          data: cred.credentials,
+          id: cred._id,
+          createdAt: cred.createdAt,
+          updatedAt: cred.updatedAt
+        }
+      });
     });
 
     res.status(200).json({
       success: true,
-      count: credentials.length,
-      credentials: credentialsByClient
+      count: result.length,
+      credentials: result
     });
   } catch (error) {
     console.error(error);

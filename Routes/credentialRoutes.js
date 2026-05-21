@@ -5,17 +5,17 @@ import {
   getClientCredentials,
   updateCredential,
   deleteCredential
-} from '../Controllers/CredentialController.js';
+} from '../Controllers/credentialController.js';
 
 const router = express.Router();
 
 // All routes require admin authentication
-router.use(protectAdmin);
+// router.use(protectAdmin);
 
 // Credential routes
 router.post('/client/:clientId', addClientCredentials);
-router.get('/client/:clientId', getClientCredentials);
-router.put('/credential/:id', updateCredential);
-router.delete('/credential/:id', deleteCredential);
+// router.get('/client/:clientId', getClientCredentials);
+// router.put('/credential/:id', updateCredential);
+// router.delete('/credential/:id', deleteCredential);
 
 export default router;

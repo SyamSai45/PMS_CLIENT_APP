@@ -62,106 +62,7 @@ export const clientLogin = async (req, res) => {
   }
 };
 
-// Get Client By ID with credentials in object format
-export const getClientById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid client ID'
-      });
-    }
-    
-    const client = await Client.findById(id).select('-password');
-    
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
-    }
-    
-    // Get credentials for this client
-    const credentials = await Credential.find({ 
-      clientId: id, 
-      isActive: true 
-    });
-    
-    // Transform to object format
-    const credentialsObject = {};
-    credentials.forEach(cred => {
-      credentialsObject[cred.credentialName] = cred.credentials;
-    });
-    
-    res.status(200).json({
-      success: true,
-      client: {
-        ...client.toObject(),
-        credentials: credentialsObject,
-        credentialsCount: credentials.length
-      }
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
 
-// Update Client By ID
-export const updateClientById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
-    
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid client ID'
-      });
-    }
-    
-    // Remove sensitive fields
-    delete updates.clientNumber;
-    delete updates._id;
-    
-    // Hash password if being updated
-    if (updates.password) {
-      updates.password = await bcrypt.hash(updates.password, 10);
-    }
-    
-    const client = await Client.findByIdAndUpdate(
-      id,
-      updates,
-      { new: true, runValidators: true }
-    ).select('-password');
-    
-    if (!client) {
-      return res.status(404).json({
-        success: false,
-        message: 'Client not found'
-      });
-    }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Client updated successfully',
-      client
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message
-    });
-  }
-};
 
 // Upload Profile Image
 export const uploadProfileImage = async (req, res) => {
@@ -396,7 +297,7 @@ export const changePassword = async (req, res) => {
   }
 };
 
-// Get Client's Credentials in object format
+// Get Client's Credentials in array format
 export const getMyCredentials = async (req, res) => {
   try {
     const { clientId } = req.params;
@@ -413,16 +314,19 @@ export const getMyCredentials = async (req, res) => {
       isActive: true 
     }).sort({ createdAt: -1 });
     
-    // Transform to object format
-    const credentialsObject = {};
-    credentials.forEach(cred => {
-      credentialsObject[cred.credentialName] = cred.credentials;
-    });
+    // Transform to array format
+    const credentialsArray = credentials.map(cred => ({
+      name: cred.credentialName,
+      data: cred.credentials,
+      _id: cred._id,
+      createdAt: cred.createdAt,
+      updatedAt: cred.updatedAt
+    }));
     
     res.status(200).json({
       success: true,
-      count: credentials.length,
-      credentials: credentialsObject
+      count: credentialsArray.length,
+      credentials: credentialsArray
     });
   } catch (error) {
     console.error(error);

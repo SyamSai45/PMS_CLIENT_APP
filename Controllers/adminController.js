@@ -2,8 +2,12 @@ import jwt from 'jsonwebtoken';
 import Admin from '../Models/Admin.js';
 import Client from '../Models/Client.js';
 import Credential from '../Models/Credential.js';
+import Banner from '../Models/Banners.js';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
+import fs from 'fs';
+import path from 'path';
+
 
 // Admin Login
 export const adminLogin = async (req, res) => {
@@ -155,7 +159,7 @@ export const createClient = async (req, res) => {
   }
 };
 
-// Get All Clients with their credentials (transformed to object format)
+// Get All Clients with their credentials (array format)
 export const getAllClients = async (req, res) => {
   try {
     // Get all clients without password
@@ -171,23 +175,23 @@ export const getAllClients = async (req, res) => {
       if (!credentialsByClient[clientId]) {
         credentialsByClient[clientId] = [];
       }
-      credentialsByClient[clientId].push(cred);
+      credentialsByClient[clientId].push({
+        name: cred.credentialName,
+        data: cred.credentials,
+        _id: cred._id,
+        createdAt: cred.createdAt,
+        updatedAt: cred.updatedAt
+      });
     });
     
-    // Combine clients with their credentials in object format
+    // Combine clients with their credentials in array format
     const clientsWithCredentials = clients.map(client => {
       const clientObj = client.toObject();
       const clientCredentials = credentialsByClient[client._id.toString()] || [];
       
-      // Transform credentials array to object format
-      const credentialsObject = {};
-      clientCredentials.forEach(cred => {
-        credentialsObject[cred.credentialName] = cred.credentials;
-      });
-      
       return {
         ...clientObj,
-        credentials: credentialsObject,  // Now it's an object, not an array
+        credentials: clientCredentials,  // Now it's an array of objects
         credentialsCount: clientCredentials.length
       };
     });
@@ -207,7 +211,7 @@ export const getAllClients = async (req, res) => {
   }
 };
 
-// Get Client By ID with credentials (transformed to object format)
+// Get Client By ID with credentials count only
 export const getClientById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -228,24 +232,16 @@ export const getClientById = async (req, res) => {
       });
     }
 
-    // Get credentials for this client
-    const credentials = await Credential.find({ 
+    const credentialsCount = await Credential.countDocuments({ 
       clientId: id, 
       isActive: true 
-    });
-    
-    // Transform credentials array to object format
-    const credentialsObject = {};
-    credentials.forEach(cred => {
-      credentialsObject[cred.credentialName] = cred.credentials;
     });
 
     res.status(200).json({
       success: true,
       client: {
         ...client.toObject(),
-        credentials: credentialsObject,
-        credentialsCount: credentials.length
+        credentialsCount: credentialsCount
       }
     });
   } catch (error) {
@@ -257,6 +253,7 @@ export const getClientById = async (req, res) => {
     });
   }
 };
+
 
 // Update Client By ID with credential management
 export const updateClientById = async (req, res) => {
@@ -417,6 +414,331 @@ export const deleteClientById = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Client and associated credentials deleted successfully'
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Create Banner with Image Upload
+export const createBanner = async (req, res) => {
+  try {
+    const adminId = req.adminId;
+
+    if (!adminId) {
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: Admin authentication required'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is required'
+      });
+    }
+
+    // Build image URL
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const imageUrl = `${baseUrl}/${req.file.path.replace(/\\/g, '/')}`;
+
+    const newBanner = new Banner({
+      image: imageUrl,
+      createdBy: adminId
+    });
+
+    await newBanner.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Banner created successfully',
+      banner: newBanner
+    });
+  } catch (error) {
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Get All Banners (Admin)
+export const getAllBanners = async (req, res) => {
+  try {
+    const { isActive } = req.query;
+    
+    let query = {};
+    if (isActive !== undefined) query.isActive = isActive === 'true';
+    
+    const banners = await Banner.find(query)
+      .populate('createdBy', 'email')
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      count: banners.length,
+      banners
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Get Active Banners (Public)
+export const getActiveBanners = async (req, res) => {
+  try {
+    const banners = await Banner.find({ isActive: true })
+      .sort({ createdAt: -1 });
+    
+    res.status(200).json({
+      success: true,
+      count: banners.length,
+      banners
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Get Banner By ID
+export const getBannerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid banner ID'
+      });
+    }
+    
+    const banner = await Banner.findById(id)
+      .populate('createdBy', 'email');
+    
+    if (!banner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Banner not found'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      banner
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Update Banner
+export const updateBanner = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid banner ID'
+      });
+    }
+    
+    const banner = await Banner.findById(id);
+    
+    if (!banner) {
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(404).json({
+        success: false,
+        message: 'Banner not found'
+      });
+    }
+    
+    // Update image if new file uploaded
+    if (req.file) {
+      // Delete old image file
+      const oldImagePath = path.join('uploads/banners', path.basename(banner.image));
+      if (fs.existsSync(oldImagePath)) {
+        fs.unlinkSync(oldImagePath);
+      }
+      
+      // Build new image URL
+      const baseUrl = `${req.protocol}://${req.get('host')}`;
+      const imageUrl = `${baseUrl}/${req.file.path.replace(/\\/g, '/')}`;
+      banner.image = imageUrl;
+    }
+    
+    // Update status
+    if (isActive !== undefined) {
+      banner.isActive = isActive;
+    }
+    
+    await banner.save();
+    
+    res.status(200).json({
+      success: true,
+      message: 'Banner updated successfully',
+      banner
+    });
+  } catch (error) {
+    if (req.file) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Delete Banner (Soft Delete)
+export const deleteBanner = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid banner ID'
+      });
+    }
+    
+    const banner = await Banner.findByIdAndUpdate(
+      id,
+      { isActive: false },
+      { new: true }
+    );
+    
+    if (!banner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Banner not found'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Banner deleted successfully'
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Permanently Delete Banner (Also delete file)
+export const permanentDeleteBanner = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid banner ID'
+      });
+    }
+    
+    const banner = await Banner.findById(id);
+    
+    if (!banner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Banner not found'
+      });
+    }
+    
+    // Delete image file from disk
+    const imagePath = path.join('uploads/banners', path.basename(banner.image));
+    if (fs.existsSync(imagePath)) {
+      fs.unlinkSync(imagePath);
+    }
+    
+    // Delete banner from database
+    await Banner.findByIdAndDelete(id);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Banner permanently deleted successfully'
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Restore Banner
+export const restoreBanner = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid banner ID'
+      });
+    }
+    
+    const banner = await Banner.findByIdAndUpdate(
+      id,
+      { isActive: true },
+      { new: true }
+    );
+    
+    if (!banner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Banner not found'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'Banner restored successfully',
+      banner
     });
   } catch (error) {
     console.error(error);
