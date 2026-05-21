@@ -11,9 +11,10 @@ import {
 
 const router = express.Router();
 
+router.post('/login', adminLogin);
+
 router.use(protectAdmin);
 
-router.post('/login', adminLogin);
 router.post('/create-client', createClient);
 router.get('/clients', getAllClients);
 router.get('/client/:id', getClientById);
